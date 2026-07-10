@@ -18,6 +18,30 @@
   body{margin:0;background:var(--paper);color:var(--ink);font-family:var(--sans);
     -webkit-font-smoothing:antialiased;line-height:1.4}
   .wrap{max-width:540px;margin:0 auto;padding:18px 16px 70px}
+  @media(min-width:980px){
+    .layout{display:grid;grid-template-columns:540px 400px;gap:24px;justify-content:center;
+      max-width:980px;margin:0 auto;padding:0 16px}
+    .wrap{margin:0;padding:18px 0 70px;max-width:none}
+    .side{padding:18px 0 70px}
+    .side .panel{position:sticky;top:18px;max-height:calc(100vh - 36px);overflow-y:auto}
+  }
+  @media(max-width:979px){.layout{display:block}.side{max-width:540px;margin:0 auto;padding:0 16px 40px}}
+
+  /* historial */
+  .hist-day{font-size:12px;font-weight:700;letter-spacing:.06em;color:var(--ink-soft);
+    text-transform:uppercase;margin:16px 0 4px;padding-bottom:4px;border-bottom:1px solid var(--line);
+    display:flex;justify-content:space-between;align-items:baseline}
+  .hist-day:first-child{margin-top:0}
+  .hist-day .hd-sum{font-family:var(--mono);font-size:12px;text-transform:none;letter-spacing:0}
+  .hrow{display:grid;grid-template-columns:auto 1fr auto;gap:10px;align-items:baseline;
+    padding:8px 0;border-bottom:1px dashed var(--line)}
+  .hrow:last-child{border-bottom:none}
+  .h-time{font-family:var(--mono);font-size:12px;color:var(--ink-soft);font-variant-numeric:tabular-nums;white-space:nowrap}
+  .h-name{font-size:13px;font-weight:500}
+  .h-meta{font-size:11px;color:var(--ink-soft);margin-top:1px;display:flex;align-items:center;gap:5px}
+  .h-meta .cd{width:7px;height:7px;border-radius:50%;flex-shrink:0}
+  .h-dur{font-family:var(--mono);font-size:13px;font-weight:600;font-variant-numeric:tabular-nums;white-space:nowrap}
+  .h-live{color:#9A7414;font-weight:700}
 
   header{display:flex;align-items:baseline;justify-content:space-between;
     padding-bottom:12px;border-bottom:2px solid var(--ink);margin-bottom:16px}
@@ -124,6 +148,7 @@
   .xls-note{text-align:center;font-size:12px;color:var(--ink-soft);margin-top:8px;min-height:16px}
 </style>
 
+<div class="layout">
 <div class="wrap">
   <header>
     <div><div class="today-label">Hoy</div><div class="today-date" id="date">—</div></div>
@@ -185,6 +210,14 @@
 
   <button class="xls" id="exportBtn">Exportar a Excel (.xlsx)</button>
   <div class="xls-note" id="xlsNote"></div>
+</div>
+
+<div class="side">
+  <div class="panel">
+    <h2>Registro · historial</h2>
+    <div id="histPanel"></div>
+  </div>
+</div>
 </div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
@@ -274,7 +307,7 @@ function addCat(){
 }
 
 // ---- tick ----
-function startTick(){ stopTick(); const upd=()=>{const t=tasks.find(x=>openSession(x)); if(t){document.getElementById("liveClock").textContent=fmtClock(total(t));document.getElementById("total").innerHTML=totalHoy();}}; upd(); tick=setInterval(upd,1000); }
+function startTick(){ stopTick(); let n=0; const upd=()=>{const t=tasks.find(x=>openSession(x)); if(t){document.getElementById("liveClock").textContent=fmtClock(total(t));document.getElementById("total").innerHTML=totalHoy(); if(++n%30===0)renderHistory();}}; upd(); tick=setInterval(upd,1000); }
 function stopTick(){ if(tick){clearInterval(tick);tick=null;} }
 function totalHoy(){ const ms=tasks.reduce((a,t)=>a+todayMs(t),0),h=Math.floor(ms/3600000),m=Math.floor(ms%3600000/60000); return h+":"+String(m).padStart(2,"0")+"<small>hoy</small>"; }
 
@@ -358,7 +391,32 @@ function renderProjects(){
     '<div class="prj-bar"><span style="width:'+Math.max(3,d.ms/max*100)+'%"></span></div></div>'
   ).join("");
 }
-function render(){renderProjList();renderLive();renderTabs();renderList();renderTime();renderProjects();document.getElementById("total").innerHTML=totalHoy();}
+function renderHistory(){
+  const el=document.getElementById("histPanel");
+  const rows=[];
+  tasks.forEach(t=>t.sessions.forEach(s=>{
+    rows.push({start:s.start,end:s.end,name:t.name,cat:t.cat,proj:projName(t.projectId)});
+  }));
+  if(!rows.length){el.innerHTML='<div class="empty">Aquí irá apareciendo cada fichaje que hagas.</div>';return;}
+  rows.sort((a,b)=>b.start-a.start);
+  const groups={},order=[];
+  rows.forEach(r=>{const k=todayKey(r.start);if(!groups[k]){groups[k]=[];order.push(k);}groups[k].push(r);});
+  const hoy=todayKey(Date.now());
+  const ayer=todayKey(Date.now()-86400000);
+  el.innerHTML=order.map(k=>{
+    const items=groups[k];
+    const sum=items.reduce((a,r)=>a+((r.end||Date.now())-r.start),0);
+    const d=new Date(items[0].start);
+    const label=k===hoy?"Hoy":k===ayer?"Ayer":d.toLocaleDateString("es-ES",{weekday:"short",day:"numeric",month:"short"});
+    return '<div class="hist-day"><span>'+label+'</span><span class="hd-sum">'+fmtH(sum)+'</span></div>'+
+      items.map(r=>
+        '<div class="hrow"><div class="h-time">'+fmtHM(r.start)+'–'+(r.end?fmtHM(r.end):'<span class="h-live">ahora</span>')+'</div>'+
+        '<div><div class="h-name">'+r.name+'</div><div class="h-meta"><span class="cd" style="background:'+catColor(r.cat)+'"></span>'+r.cat+(r.proj?' · '+r.proj:'')+'</div></div>'+
+        '<div class="h-dur'+(r.end?"":" h-live")+'">'+fmtDur((r.end||Date.now())-r.start)+'</div></div>'
+      ).join("");
+  }).join("");
+}
+function render(){renderProjList();renderLive();renderTabs();renderList();renderTime();renderProjects();renderHistory();document.getElementById("total").innerHTML=totalHoy();}
 
 // ---- export a Excel ----
 const fmtFecha=t=>new Date(t).toLocaleDateString("es-ES");
