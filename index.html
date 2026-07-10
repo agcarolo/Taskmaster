@@ -42,6 +42,20 @@
   .h-meta .cd{width:7px;height:7px;border-radius:50%;flex-shrink:0}
   .h-dur{font-family:var(--mono);font-size:13px;font-weight:600;font-variant-numeric:tabular-nums;white-space:nowrap}
   .h-live{color:#9A7414;font-weight:700}
+  .h-edit{background:none;border:none;color:var(--line);cursor:pointer;font-size:13px;padding:0 3px}
+  .h-edit:hover{color:var(--ink)}
+  .mini{border:1px solid var(--line);background:#fff;border-radius:7px;padding:4px 10px;
+    font-size:12px;font-weight:600;cursor:pointer;color:var(--ink);font-family:var(--sans);text-transform:none;letter-spacing:0}
+  .h-form{background:var(--paper);border:1px solid var(--line);border-radius:9px;padding:10px;margin:8px 0}
+  .h-form .hf-row{display:flex;gap:6px;margin-bottom:7px;flex-wrap:wrap}
+  .h-form input,.h-form select{border:1px solid var(--line);border-radius:7px;padding:7px 9px;
+    font-size:13px;font-family:var(--sans);background:#fff;color:var(--ink);flex:1;min-width:90px}
+  .h-form .hf-btns{display:flex;gap:6px}
+  .h-form .hf-btns button{flex:1;border:none;border-radius:7px;padding:8px;font-size:12px;font-weight:700;cursor:pointer}
+  .hf-save{background:var(--ink);color:#fff}
+  .hf-del{background:#fff;border:1px solid #e3b8b8 !important;color:var(--c-Legal)}
+  .hf-cancel{background:#fff;border:1px solid var(--line) !important;color:var(--ink-soft)}
+  .hf-err{font-size:11px;color:var(--c-Legal);min-height:14px}
 
   header{display:flex;align-items:baseline;justify-content:space-between;
     padding-bottom:12px;border-bottom:2px solid var(--ink);margin-bottom:16px}
@@ -214,7 +228,8 @@
 
 <div class="side">
   <div class="panel">
-    <h2>Registro · historial</h2>
+    <h2 style="display:flex;justify-content:space-between;align-items:center">Registro · historial <button id="histAddBtn" class="mini">+ A mano</button></h2>
+    <div id="histForm"></div>
     <div id="histPanel"></div>
   </div>
 </div>
@@ -307,7 +322,7 @@ function addCat(){
 }
 
 // ---- tick ----
-function startTick(){ stopTick(); let n=0; const upd=()=>{const t=tasks.find(x=>openSession(x)); if(t){document.getElementById("liveClock").textContent=fmtClock(total(t));document.getElementById("total").innerHTML=totalHoy(); if(++n%30===0)renderHistory();}}; upd(); tick=setInterval(upd,1000); }
+function startTick(){ stopTick(); let n=0; const upd=()=>{const t=tasks.find(x=>openSession(x)); if(t){document.getElementById("liveClock").textContent=fmtClock(total(t));document.getElementById("total").innerHTML=totalHoy(); if(++n%30===0&&!histEdit&&!histAdding)renderHistory();}}; upd(); tick=setInterval(upd,1000); }
 function stopTick(){ if(tick){clearInterval(tick);tick=null;} }
 function totalHoy(){ const ms=tasks.reduce((a,t)=>a+todayMs(t),0),h=Math.floor(ms/3600000),m=Math.floor(ms%3600000/60000); return h+":"+String(m).padStart(2,"0")+"<small>hoy</small>"; }
 
@@ -391,11 +406,53 @@ function renderProjects(){
     '<div class="prj-bar"><span style="width:'+Math.max(3,d.ms/max*100)+'%"></span></div></div>'
   ).join("");
 }
+let histEdit=null;   // {tid,idx} sesión en edición
+let histAdding=false;
+const pad2=n=>String(n).padStart(2,"0");
+const tsDate=ts=>{const d=new Date(ts);return d.getFullYear()+"-"+pad2(d.getMonth()+1)+"-"+pad2(d.getDate());};
+const tsTime=ts=>{const d=new Date(ts);return pad2(d.getHours())+":"+pad2(d.getMinutes());};
+const toTs=(ds,hs)=>new Date(ds+"T"+hs).getTime();
+
+function renderHistForm(){
+  const el=document.getElementById("histForm");
+  if(!histAdding){el.innerHTML="";return;}
+  const opts=tasks.slice().sort((a,b)=>b.id<a.id?-1:1).map(t=>'<option value="'+t.name.replace(/"/g,'&quot;')+'">').join("");
+  const pOpts=projects.map(p=>'<option value="'+p.name.replace(/"/g,'&quot;')+'">').join("");
+  const cOpts=allCats().map(c=>'<option value="'+c+'"'+(c===selCat?" selected":"")+'>'+c+'</option>').join("");
+  const hoy=tsDate(Date.now());
+  el.innerHTML='<div class="h-form">'+
+    '<div class="hf-row"><input type="text" id="hfName" placeholder="Tarea (existente o nueva)" list="hfList" style="flex:2"><datalist id="hfList">'+opts+'</datalist></div>'+
+    '<div class="hf-row"><input type="text" id="hfProj" placeholder="Proyecto (opcional)" list="hfProjList" style="flex:1.4"><datalist id="hfProjList">'+pOpts+'</datalist>'+
+    '<select id="hfCat">'+cOpts+'</select></div>'+
+    '<div class="hf-row"><input type="date" id="hfDate" value="'+hoy+'"><input type="time" id="hfIni"><input type="time" id="hfFin"></div>'+
+    '<div class="hf-err" id="hfErr"></div>'+
+    '<div class="hf-btns"><button class="hf-save" id="hfSave">Guardar registro</button><button class="hf-cancel" id="hfCancel">Cancelar</button></div></div>';
+  document.getElementById("hfSave").onclick=()=>{
+    const name=document.getElementById("hfName").value.trim();
+    const pn=document.getElementById("hfProj").value.trim();
+    const cat=document.getElementById("hfCat").value;
+    const ds=document.getElementById("hfDate").value, hi=document.getElementById("hfIni").value, hf=document.getElementById("hfFin").value;
+    const err=document.getElementById("hfErr");
+    if(!name||!ds||!hi||!hf){err.textContent="Rellena tarea, fecha y horas.";return;}
+    const s=toTs(ds,hi), e=toTs(ds,hf);
+    if(!(e>s)){err.textContent="La hora de fin debe ser posterior a la de inicio.";return;}
+    let pid=null;
+    if(pn){let p=projects.find(x=>x.name.toLowerCase()===pn.toLowerCase()); if(!p){p={id:"p"+Date.now(),name:pn};projects.push(p);} pid=p.id;}
+    let t=tasks.find(x=>x.name.toLowerCase()===name.toLowerCase());
+    if(!t){t={id:"t"+Date.now(),name,cat,projectId:pid,finished:false,sessions:[]};tasks.push(t);}
+    else if(pid&&!t.projectId){t.projectId=pid;}
+    t.sessions.push({start:s,end:e});
+    histAdding=false; save(); render();
+  };
+  document.getElementById("hfCancel").onclick=()=>{histAdding=false;renderHistForm();};
+}
+
 function renderHistory(){
   const el=document.getElementById("histPanel");
+  renderHistForm();
   const rows=[];
-  tasks.forEach(t=>t.sessions.forEach(s=>{
-    rows.push({start:s.start,end:s.end,name:t.name,cat:t.cat,proj:projName(t.projectId)});
+  tasks.forEach(t=>t.sessions.forEach((s,idx)=>{
+    rows.push({tid:t.id,idx,start:s.start,end:s.end,name:t.name,cat:t.cat,proj:projName(t.projectId)});
   }));
   if(!rows.length){el.innerHTML='<div class="empty">Aquí irá apareciendo cada fichaje que hagas.</div>';return;}
   rows.sort((a,b)=>b.start-a.start);
@@ -409,12 +466,40 @@ function renderHistory(){
     const d=new Date(items[0].start);
     const label=k===hoy?"Hoy":k===ayer?"Ayer":d.toLocaleDateString("es-ES",{weekday:"short",day:"numeric",month:"short"});
     return '<div class="hist-day"><span>'+label+'</span><span class="hd-sum">'+fmtH(sum)+'</span></div>'+
-      items.map(r=>
-        '<div class="hrow"><div class="h-time">'+fmtHM(r.start)+'–'+(r.end?fmtHM(r.end):'<span class="h-live">ahora</span>')+'</div>'+
+      items.map(r=>{
+        if(histEdit&&histEdit.tid===r.tid&&histEdit.idx===r.idx){
+          return '<div class="h-form">'+
+            '<div style="font-size:12px;font-weight:600;margin-bottom:7px">'+r.name+'</div>'+
+            '<div class="hf-row"><input type="date" id="heDate" value="'+tsDate(r.start)+'"><input type="time" id="heIni" value="'+tsTime(r.start)+'"><input type="time" id="heFin" value="'+(r.end?tsTime(r.end):"")+'"'+(r.end?"":" disabled")+'></div>'+
+            '<div class="hf-err" id="heErr">'+(r.end?"":"Sesión en curso: solo puedes ajustar el inicio.")+'</div>'+
+            '<div class="hf-btns"><button class="hf-save" data-he="save">Guardar</button><button class="hf-del" data-he="del">Borrar</button><button class="hf-cancel" data-he="cancel">✕</button></div></div>';
+        }
+        return '<div class="hrow"><div class="h-time">'+fmtHM(r.start)+'–'+(r.end?fmtHM(r.end):'<span class="h-live">ahora</span>')+'</div>'+
         '<div><div class="h-name">'+r.name+'</div><div class="h-meta"><span class="cd" style="background:'+catColor(r.cat)+'"></span>'+r.cat+(r.proj?' · '+r.proj:'')+'</div></div>'+
-        '<div class="h-dur'+(r.end?"":" h-live")+'">'+fmtDur((r.end||Date.now())-r.start)+'</div></div>'
-      ).join("");
+        '<div style="display:flex;align-items:baseline;gap:2px"><span class="h-dur'+(r.end?"":" h-live")+'">'+fmtDur((r.end||Date.now())-r.start)+'</span>'+
+        '<button class="h-edit" data-tid="'+r.tid+'" data-idx="'+r.idx+'" title="Editar">✎</button></div></div>';
+      }).join("");
   }).join("");
+  el.querySelectorAll(".h-edit").forEach(b=>b.onclick=()=>{histEdit={tid:b.dataset.tid,idx:+b.dataset.idx};histAdding=false;renderHistory();});
+  el.querySelectorAll("button[data-he]").forEach(b=>b.onclick=()=>{
+    const a=b.dataset.he;
+    if(a==="cancel"){histEdit=null;renderHistory();return;}
+    const t=tasks.find(x=>x.id===histEdit.tid); if(!t){histEdit=null;renderHistory();return;}
+    const s=t.sessions[histEdit.idx];
+    if(a==="del"){t.sessions.splice(histEdit.idx,1);histEdit=null;save();render();return;}
+    const ds=document.getElementById("heDate").value, hi=document.getElementById("heIni").value;
+    if(!ds||!hi){document.getElementById("heErr").textContent="Fecha y hora de inicio son obligatorias.";return;}
+    const ns=toTs(ds,hi);
+    if(s.end===null){ if(ns>Date.now()){document.getElementById("heErr").textContent="El inicio no puede ser futuro.";return;} s.start=ns; }
+    else{
+      const hf=document.getElementById("heFin").value;
+      if(!hf){document.getElementById("heErr").textContent="Falta la hora de fin.";return;}
+      const ne=toTs(ds,hf);
+      if(!(ne>ns)){document.getElementById("heErr").textContent="El fin debe ser posterior al inicio.";return;}
+      s.start=ns; s.end=ne;
+    }
+    histEdit=null; save(); render();
+  });
 }
 function render(){renderProjList();renderLive();renderTabs();renderList();renderTime();renderProjects();renderHistory();document.getElementById("total").innerHTML=totalHoy();}
 
@@ -463,6 +548,7 @@ document.getElementById("newcatOk").onclick=addCat;
 document.getElementById("newcatName").addEventListener("keydown",e=>{if(e.key==="Enter")addCat();});
 document.getElementById("newcatNo").onclick=()=>{document.getElementById("newcat").style.display="none";};
 document.getElementById("exportBtn").onclick=exportExcel;
+document.getElementById("histAddBtn").onclick=()=>{histAdding=!histAdding;histEdit=null;renderHistory();};
 
 (async function(){
   document.getElementById("date").textContent=new Date().toLocaleDateString("es-ES",{weekday:"long",day:"numeric",month:"long"});
