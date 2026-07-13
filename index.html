@@ -468,11 +468,16 @@ function renderHistory(){
     return '<div class="hist-day"><span>'+label+'</span><span class="hd-sum">'+fmtH(sum)+'</span></div>'+
       items.map(r=>{
         if(histEdit&&histEdit.tid===r.tid&&histEdit.idx===r.idx){
+          const t0=tasks.find(x=>x.id===r.tid);
+          const pOpts=projects.map(p=>'<option value="'+p.name.replace(/"/g,'&quot;')+'">').join("");
+          const cOpts=allCats().map(c=>'<option value="'+c+'"'+(c===t0.cat?" selected":"")+'>'+c+'</option>').join("");
           return '<div class="h-form">'+
-            '<div style="font-size:12px;font-weight:600;margin-bottom:7px">'+r.name+'</div>'+
+            '<div class="hf-row"><input type="text" id="heName" value="'+t0.name.replace(/"/g,'&quot;')+'" placeholder="Nombre de la tarea" style="flex:2"></div>'+
+            '<div class="hf-row"><input type="text" id="heProj" value="'+(projName(t0.projectId)||"").replace(/"/g,'&quot;')+'" placeholder="Proyecto (vacío = sin proyecto)" list="heProjList" style="flex:1.4"><datalist id="heProjList">'+pOpts+'</datalist>'+
+            '<select id="heCat">'+cOpts+'</select></div>'+
             '<div class="hf-row"><input type="date" id="heDate" value="'+tsDate(r.start)+'"><input type="time" id="heIni" value="'+tsTime(r.start)+'"><input type="time" id="heFin" value="'+(r.end?tsTime(r.end):"")+'"'+(r.end?"":" disabled")+'></div>'+
             '<div class="hf-err" id="heErr">'+(r.end?"":"Sesión en curso: solo puedes ajustar el inicio.")+'</div>'+
-            '<div class="hf-btns"><button class="hf-save" data-he="save">Guardar</button><button class="hf-del" data-he="del">Borrar</button><button class="hf-cancel" data-he="cancel">✕</button></div></div>';
+            '<div class="hf-btns"><button class="hf-save" data-he="save">Guardar</button><button class="hf-del" data-he="del">Borrar registro</button><button class="hf-cancel" data-he="cancel">✕</button></div></div>';
         }
         return '<div class="hrow"><div class="h-time">'+fmtHM(r.start)+'–'+(r.end?fmtHM(r.end):'<span class="h-live">ahora</span>')+'</div>'+
         '<div><div class="h-name">'+r.name+'</div><div class="h-meta"><span class="cd" style="background:'+catColor(r.cat)+'"></span>'+r.cat+(r.proj?' · '+r.proj:'')+'</div></div>'+
@@ -487,6 +492,10 @@ function renderHistory(){
     const t=tasks.find(x=>x.id===histEdit.tid); if(!t){histEdit=null;renderHistory();return;}
     const s=t.sessions[histEdit.idx];
     if(a==="del"){t.sessions.splice(histEdit.idx,1);histEdit=null;save();render();return;}
+    const nn=document.getElementById("heName").value.trim();
+    if(!nn){document.getElementById("heErr").textContent="El nombre no puede quedar vacío.";return;}
+    const pn=document.getElementById("heProj").value.trim();
+    const nc=document.getElementById("heCat").value;
     const ds=document.getElementById("heDate").value, hi=document.getElementById("heIni").value;
     if(!ds||!hi){document.getElementById("heErr").textContent="Fecha y hora de inicio son obligatorias.";return;}
     const ns=toTs(ds,hi);
@@ -498,6 +507,9 @@ function renderHistory(){
       if(!(ne>ns)){document.getElementById("heErr").textContent="El fin debe ser posterior al inicio.";return;}
       s.start=ns; s.end=ne;
     }
+    t.name=nn; t.cat=nc;
+    if(!pn){t.projectId=null;}
+    else{let p=projects.find(x=>x.name.toLowerCase()===pn.toLowerCase()); if(!p){p={id:"p"+Date.now(),name:pn};projects.push(p);} t.projectId=p.id;}
     histEdit=null; save(); render();
   });
 }
