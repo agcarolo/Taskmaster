@@ -57,6 +57,20 @@
   .hf-cancel{background:#fff;border:1px solid var(--line) !important;color:var(--ink-soft)}
   .hf-err{font-size:11px;color:var(--c-Legal);min-height:14px}
 
+  .chk{display:flex;align-items:center;gap:7px;font-size:13px;color:var(--ink-soft);margin:0 0 12px;cursor:pointer}
+  .btn-done{background:var(--ink);color:#fff;letter-spacing:.02em}
+  .follow{color:#9A7414;font-weight:700}
+  .tpl-row{display:grid;grid-template-columns:1fr auto;gap:6px;padding:9px 0;border-bottom:1px solid var(--line);align-items:center}
+  .tpl-row:last-child{border-bottom:none}
+  .tpl-name{font-size:14px;font-weight:600}
+  .tpl-meta{font-size:12px;color:var(--ink-soft)}
+  .tpl-btns{display:flex;gap:5px}
+  .tpl-btns button{border:1px solid var(--line);background:#fff;border-radius:7px;padding:5px 10px;
+    font-size:12px;font-weight:600;cursor:pointer;color:var(--ink);font-family:var(--sans)}
+  .tpl-btns .go{background:var(--live);border-color:var(--live);color:#3d2c00}
+  .tpl-btns .x{color:var(--line);padding:5px 8px}
+  .tpl-btns .x:hover{color:var(--c-Legal)}
+
   header{display:flex;align-items:baseline;justify-content:space-between;
     padding-bottom:12px;border-bottom:2px solid var(--ink);margin-bottom:16px}
   .today-label{font-size:12px;letter-spacing:.12em;text-transform:uppercase;color:var(--ink-soft)}
@@ -189,10 +203,18 @@
       <input type="text" id="newcatName" placeholder="Nombre de la categoría" maxlength="20">
       <button id="newcatOk">Añadir</button><button class="cancel" id="newcatNo">✕</button>
     </div>
+    <label class="chk"><input type="checkbox" id="fuChk"> 🔔 Necesita seguimiento (p. ej. esperar respuesta)</label>
     <div class="add-btns">
       <button class="btn-start" id="startBtn">Empezar ahora</button>
-      <button class="btn-pending" id="pendBtn">Guardar como pendiente</button>
+      <button class="btn-pending" id="pendBtn">Pendiente</button>
+      <button class="btn-done" id="doneBtn">Hecha</button>
     </div>
+  </div>
+
+  <div class="panel">
+    <h2 style="display:flex;justify-content:space-between;align-items:center">Rutinas <button id="tplAddBtn" class="mini">+ Nueva</button></h2>
+    <div id="tplForm"></div>
+    <div id="tplList"></div>
   </div>
 
   <div class="tabs" id="tabs"></div>
@@ -243,9 +265,11 @@ const varName=c=>"--c-"+c.replace(/\s/g,"");
 const css=v=>getComputedStyle(document.documentElement).getPropertyValue(v).trim();
 
 let projects=[];    // {id,name}
-let tasks=[];       // {id,name,cat,projectId,finished,sessions:[{start,end}]}
+let tasks=[];       // {id,name,cat,projectId,finished,followUp,sessions:[{start,end}]}
 let customCats=[];  // {name,color}
+let templates=[];   // {id,name,cat,projectId,mins}
 let selCat="Research", tab="activa", groupBy=false, bdMode="cat", period="hoy", tick=null;
+let tplAdding=false, tplUse=null;
 
 const allCats=()=>BASE_CATS.concat(customCats.map(c=>c.name));
 function catColor(c){
@@ -263,10 +287,10 @@ async function rawGet(k){
   if(hasStore){ try{const r=await window.storage.get(k);return r?r.value:null;}catch(e){return null;} }
   try{return localStorage.getItem(k);}catch(e){return null;}
 }
-async function save(){ await rawSet("timelog:v2",JSON.stringify({projects,tasks,customCats})); }
+async function save(){ await rawSet("timelog:v2",JSON.stringify({projects,tasks,customCats,templates})); }
 async function load(){
   const v=await rawGet("timelog:v2");
-  if(v){ try{const d=JSON.parse(v);projects=d.projects||[];tasks=d.tasks||[];customCats=d.customCats||[];return;}catch(e){} }
+  if(v){ try{const d=JSON.parse(v);projects=d.projects||[];tasks=d.tasks||[];customCats=d.customCats||[];templates=d.templates||[];return;}catch(e){} }
   const o=await rawGet("timelog:entries");
   if(o){ try{JSON.parse(o).forEach(e=>{tasks.push({id:e.id,name:e.name,cat:e.cat,projectId:null,finished:true,sessions:[{start:e.start,end:e.end}]});});}catch(e){} }
 }
@@ -294,15 +318,28 @@ const perLabel={hoy:"hoy",semana:"esta semana",mes:"este mes",todo:"en total"};
 
 // ---- actions ----
 function pauseRunning(){ tasks.forEach(t=>{const o=openSession(t); if(o)o.end=Date.now();}); }
-function newTask(start){
+function newTask(mode){ // 'start' | 'pend' | 'done'
   const name=document.getElementById("taskName").value.trim(); if(!name){document.getElementById("taskName").focus();return;}
   const pn=document.getElementById("taskProj").value.trim();
+  const fu=document.getElementById("fuChk").checked;
   let pid=null; if(pn){let p=projects.find(x=>x.name.toLowerCase()===pn.toLowerCase()); if(!p){p={id:"p"+Date.now(),name:pn};projects.push(p);} pid=p.id;}
-  const t={id:"t"+Date.now(),name,cat:selCat,projectId:pid,finished:false,sessions:[]};
-  if(start){pauseRunning();t.sessions.push({start:Date.now(),end:null});}
+  const t={id:"t"+Date.now(),name,cat:selCat,projectId:pid,finished:mode==="done",followUp:fu,sessions:[]};
+  if(mode==="start"){pauseRunning();t.sessions.push({start:Date.now(),end:null});}
   tasks.push(t);
   document.getElementById("taskName").value="";document.getElementById("taskProj").value="";
-  commit(start);
+  document.getElementById("fuChk").checked=false;
+  commit(mode==="start");
+}
+function taskForTpl(tp){
+  let t=tasks.find(x=>x.name.toLowerCase()===tp.name.toLowerCase());
+  if(!t){t={id:"t"+Date.now(),name:tp.name,cat:tp.cat,projectId:tp.projectId,finished:false,followUp:false,sessions:[]};tasks.push(t);}
+  return t;
+}
+function startFromTpl(id){
+  const tp=templates.find(x=>x.id===id); if(!tp)return;
+  const t=taskForTpl(tp); t.finished=false;
+  pauseRunning(); t.sessions.push({start:Date.now(),end:null});
+  tplUse=null; commit(true);
 }
 function startTask(id){ pauseRunning(); const t=tasks.find(x=>x.id===id); t.finished=false; t.sessions.push({start:Date.now(),end:null}); commit(true); }
 function pauseTask(){ pauseRunning(); commit(false); }
@@ -350,33 +387,45 @@ function renderLive(){
   else box.classList.remove("on");
 }
 function renderTabs(){
-  const counts={activa:0,pendiente:0,terminada:0};
-  tasks.forEach(t=>{const s=state(t); if(s==="pausada")counts.activa++; else if(s==="pendiente")counts.pendiente++; else if(s==="terminada")counts.terminada++;});
-  const defs=[["activa","Activas"],["pendiente","Pendientes"],["terminada","Terminadas"]];
+  const counts={activa:0,pendiente:0,terminada:0,seguimiento:0};
+  tasks.forEach(t=>{const s=state(t); if(s==="pausada")counts.activa++; else if(s==="pendiente")counts.pendiente++; else if(s==="terminada")counts.terminada++; if(t.followUp)counts.seguimiento++;});
+  const defs=[["activa","Activas"],["pendiente","Pend."],["terminada","Term."],["seguimiento","🔔 Seg."]];
   document.getElementById("tabs").innerHTML=defs.map(([k,l])=>'<button class="tab'+(tab===k?" sel":"")+'" data-t="'+k+'">'+l+'<span class="n">'+counts[k]+'</span></button>').join("");
   document.querySelectorAll(".tab").forEach(b=>b.onclick=()=>{tab=b.dataset.t;render();});
 }
 function taskRow(t){
   const s=state(t),pj=projName(t.projectId);
   let acts="";
-  if(s==="pendiente")acts='<button class="go" data-a="start" data-id="'+t.id+'">Empezar</button>';
-  else if(s==="pausada")acts='<button class="go" data-a="start" data-id="'+t.id+'">Reanudar</button><button class="fin" data-a="finish" data-id="'+t.id+'">Terminar</button>';
-  else if(s==="terminada")acts='<button data-a="reopen" data-id="'+t.id+'">Reabrir</button>';
+  if(tab==="seguimiento"){
+    acts='<button class="fin" data-a="fuoff" data-id="'+t.id+'">Resuelto ✓</button>';
+  }else{
+    if(s==="pendiente")acts='<button class="go" data-a="start" data-id="'+t.id+'">Empezar</button>';
+    else if(s==="pausada")acts='<button class="go" data-a="start" data-id="'+t.id+'">Reanudar</button><button class="fin" data-a="finish" data-id="'+t.id+'">Terminar</button>';
+    else if(s==="terminada")acts='<button data-a="reopen" data-id="'+t.id+'">Reabrir</button>';
+  }
+  const fuOn=t.followUp?'border-color:#E0A82E;background:var(--live-soft);color:#9A7414':'';
+  acts='<button data-a="fu" data-id="'+t.id+'" title="Seguimiento" style="'+fuOn+'">🔔</button>'+acts;
   const dur=t.sessions.length?'<span class="tdur">'+fmtDur(total(t))+'</span>':'';
   return '<div class="task'+(s==="terminada"?" done":"")+'">'+
     '<span class="tdot" style="background:'+catColor(t.cat)+'"></span>'+
-    '<div><div class="tname">'+t.name+'</div><div class="tmeta">'+t.cat+(pj?' · <span class="pj">'+pj+'</span>':'')+'</div></div>'+
+    '<div><div class="tname">'+t.name+'</div><div class="tmeta">'+t.cat+(pj?' · <span class="pj">'+pj+'</span>':'')+(t.followUp?' · <span class="follow">🔔 seguimiento</span>':'')+'</div></div>'+
     '<div class="tright">'+dur+'<div class="tacts">'+acts+'<button class="x" data-a="del" data-id="'+t.id+'">×</button></div></div></div>';
 }
 function renderList(){
   const el=document.getElementById("list");
-  let items=tasks.filter(t=>{const s=state(t); return tab==="activa"?s==="pausada":tab==="pendiente"?s==="pendiente":s==="terminada";});
-  if(!items.length){el.innerHTML='<div class="empty">'+(tab==="activa"?"Nada en pausa. Lo que empieces y pauses saldrá aquí.":tab==="pendiente"?"Sin pendientes. Guarda tareas para más tarde.":"Nada terminado aún.")+'</div>';return;}
+  let items=tasks.filter(t=>{const s=state(t); return tab==="seguimiento"?t.followUp===true:tab==="activa"?s==="pausada":tab==="pendiente"?s==="pendiente":s==="terminada";});
+  if(!items.length){el.innerHTML='<div class="empty">'+(tab==="seguimiento"?"Nada en seguimiento. Marca la campana 🔔 en una tarea para vigilarla.":tab==="activa"?"Nada en pausa. Lo que empieces y pauses saldrá aquí.":tab==="pendiente"?"Sin pendientes. Guarda tareas para más tarde.":"Nada terminado aún.")+'</div>';return;}
   if(groupBy){
     const groups={};items.forEach(t=>{const k=projName(t.projectId)||"· Sin proyecto";(groups[k]=groups[k]||[]).push(t);});
     el.innerHTML=Object.keys(groups).sort().map(g=>'<div class="grouphdr">'+g+'</div>'+groups[g].map(taskRow).join("")).join("");
   }else el.innerHTML=items.map(taskRow).join("");
-  el.querySelectorAll("button[data-a]").forEach(b=>b.onclick=()=>{const a=b.dataset.a,id=b.dataset.id;a==="start"?startTask(id):a==="finish"?finishTask(id):a==="reopen"?reopen(id):del(id);});
+  el.querySelectorAll("button[data-a]").forEach(b=>b.onclick=()=>{const a=b.dataset.a,id=b.dataset.id;
+    if(a==="start")startTask(id);
+    else if(a==="finish")finishTask(id);
+    else if(a==="reopen")reopen(id);
+    else if(a==="fu"){const x=tasks.find(y=>y.id===id);x.followUp=!x.followUp;save();render();}
+    else if(a==="fuoff"){const x=tasks.find(y=>y.id===id);x.followUp=false;save();render();}
+    else del(id);});
 }
 function renderTime(){
   const acc={};let sum=0;
@@ -513,7 +562,65 @@ function renderHistory(){
     histEdit=null; save(); render();
   });
 }
-function render(){renderProjList();renderLive();renderTabs();renderList();renderTime();renderProjects();renderHistory();document.getElementById("total").innerHTML=totalHoy();}
+function renderTplForm(){
+  const el=document.getElementById("tplForm");
+  if(!tplAdding){el.innerHTML="";return;}
+  const pOpts=projects.map(p=>'<option value="'+p.name.replace(/"/g,'&quot;')+'">').join("");
+  const cOpts=allCats().map(c=>'<option value="'+c+'"'+(c===selCat?" selected":"")+'>'+c+'</option>').join("");
+  el.innerHTML='<div class="h-form">'+
+    '<div class="hf-row"><input type="text" id="tfName" placeholder="Nombre (p. ej. Morning brief)" style="flex:2"></div>'+
+    '<div class="hf-row"><input type="text" id="tfProj" placeholder="Proyecto (opcional)" list="tfProjList" style="flex:1.4"><datalist id="tfProjList">'+pOpts+'</datalist>'+
+    '<select id="tfCat">'+cOpts+'</select><input type="number" id="tfMins" value="20" min="1" max="600" style="max-width:80px" title="Minutos por defecto"></div>'+
+    '<div class="hf-err" id="tfErr"></div>'+
+    '<div class="hf-btns"><button class="hf-save" id="tfSave">Crear rutina</button><button class="hf-cancel" id="tfCancel">Cancelar</button></div></div>';
+  document.getElementById("tfSave").onclick=()=>{
+    const name=document.getElementById("tfName").value.trim();
+    const pn=document.getElementById("tfProj").value.trim();
+    const cat=document.getElementById("tfCat").value;
+    const mins=parseInt(document.getElementById("tfMins").value)||20;
+    if(!name){document.getElementById("tfErr").textContent="Ponle nombre a la rutina.";return;}
+    let pid=null; if(pn){let p=projects.find(x=>x.name.toLowerCase()===pn.toLowerCase()); if(!p){p={id:"p"+Date.now(),name:pn};projects.push(p);} pid=p.id;}
+    templates.push({id:"tpl"+Date.now(),name,cat,projectId:pid,mins});
+    tplAdding=false; save(); render();
+  };
+  document.getElementById("tfCancel").onclick=()=>{tplAdding=false;renderTplForm();};
+}
+function renderTemplates(){
+  renderTplForm();
+  const el=document.getElementById("tplList");
+  if(!templates.length){el.innerHTML='<div class="empty">Crea rutinas (p. ej. Morning brief · 20 min) y fíchalas en un clic.</div>';return;}
+  el.innerHTML=templates.map(tp=>{
+    const pj=projName(tp.projectId);
+    let extra="";
+    if(tplUse===tp.id){
+      const defIni=tsTime(Date.now()-tp.mins*60000);
+      extra='<div class="h-form">'+
+        '<div class="hf-row"><input type="time" id="tuIni" value="'+defIni+'" title="Hora de inicio"><input type="number" id="tuMins" value="'+tp.mins+'" min="1" max="600" title="Minutos"></div>'+
+        '<div class="hf-err" id="tuErr"></div>'+
+        '<div class="hf-btns"><button class="hf-save" data-tu="save" data-id="'+tp.id+'">Registrar</button><button class="hf-cancel" data-tu="cancel">✕</button></div></div>';
+    }
+    return '<div class="tpl-row"><div><div class="tpl-name">'+tp.name+'</div><div class="tpl-meta">'+tp.cat+(pj?' · '+pj:'')+' · '+tp.mins+' min</div></div>'+
+      '<div class="tpl-btns"><button class="go" data-tp="start" data-id="'+tp.id+'">▶ Ahora</button><button data-tp="log" data-id="'+tp.id+'">✓ Registrar</button><button class="x" data-tp="del" data-id="'+tp.id+'">×</button></div></div>'+extra;
+  }).join("");
+  el.querySelectorAll("button[data-tp]").forEach(b=>b.onclick=()=>{
+    const a=b.dataset.tp,id=b.dataset.id;
+    if(a==="start")startFromTpl(id);
+    else if(a==="log"){tplUse=tplUse===id?null:id;renderTemplates();}
+    else{templates=templates.filter(x=>x.id!==id);tplUse=null;save();renderTemplates();}
+  });
+  el.querySelectorAll("button[data-tu]").forEach(b=>b.onclick=()=>{
+    if(b.dataset.tu==="cancel"){tplUse=null;renderTemplates();return;}
+    const tp=templates.find(x=>x.id===b.dataset.id); if(!tp){tplUse=null;renderTemplates();return;}
+    const hi=document.getElementById("tuIni").value;
+    const mins=parseInt(document.getElementById("tuMins").value);
+    if(!hi||!mins||mins<1){document.getElementById("tuErr").textContent="Revisa hora y minutos.";return;}
+    const s=toTs(tsDate(Date.now()),hi), e=s+mins*60000;
+    const t=taskForTpl(tp);
+    t.sessions.push({start:s,end:e});
+    tplUse=null; save(); render();
+  });
+}
+function render(){renderProjList();renderLive();renderTabs();renderList();renderTime();renderProjects();renderHistory();renderTemplates();document.getElementById("total").innerHTML=totalHoy();}
 
 // ---- export a Excel ----
 const fmtFecha=t=>new Date(t).toLocaleDateString("es-ES");
@@ -523,7 +630,7 @@ function exportExcel(){
     const wb=XLSX.utils.book_new();
     const tRows=tasks.map(t=>({
       "Tarea":t.name,"Categoría":t.cat,"Proyecto":projName(t.projectId)||"",
-      "Estado":estadoTxt(t),"Minutos totales":Math.round(total(t)/60000),"Sesiones":t.sessions.length
+      "Estado":estadoTxt(t),"Seguimiento":t.followUp?"Sí":"","Minutos totales":Math.round(total(t)/60000),"Sesiones":t.sessions.length
     }));
     XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(tRows),"Tareas");
     const sRows=[];
@@ -548,9 +655,11 @@ function exportExcel(){
 }
 
 // ---- wires ----
-document.getElementById("startBtn").onclick=()=>newTask(true);
-document.getElementById("pendBtn").onclick=()=>newTask(false);
-document.getElementById("taskName").addEventListener("keydown",e=>{if(e.key==="Enter")newTask(true);});
+document.getElementById("startBtn").onclick=()=>newTask("start");
+document.getElementById("pendBtn").onclick=()=>newTask("pend");
+document.getElementById("doneBtn").onclick=()=>newTask("done");
+document.getElementById("tplAddBtn").onclick=()=>{tplAdding=!tplAdding;tplUse=null;renderTemplates();};
+document.getElementById("taskName").addEventListener("keydown",e=>{if(e.key==="Enter")newTask("start");});
 document.getElementById("pauseBtn").onclick=pauseTask;
 document.getElementById("finishBtn").onclick=()=>finishTask(document.getElementById("finishBtn").dataset.id);
 document.getElementById("groupChk").onchange=e=>{groupBy=e.target.checked;renderList();};
